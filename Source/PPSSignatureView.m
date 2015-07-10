@@ -116,6 +116,10 @@ static PPSSignaturePoint ViewPointToGL(CGPoint viewPoint, CGRect bounds, GLKVect
     // Differentiate taps from pans
     CGPoint firstPoint;
     NSUInteger numberOfTouchEvents;
+    
+    
+    // Velocity in view
+    CFAbsoluteTime previousTouchTime;
 }
 
 @end
@@ -245,10 +249,11 @@ static PPSSignaturePoint ViewPointToGL(CGPoint viewPoint, CGRect bounds, GLKVect
     
     self.hasSignature = YES;
     
-    [self setNeedsDisplay];
-    
     numberOfTouchEvents = 0;
     firstPoint = l;
+    previousTouchTime = CFAbsoluteTimeGetCurrent();
+    
+    [self setNeedsDisplay];
 }
 
 
@@ -257,13 +262,21 @@ static PPSSignaturePoint ViewPointToGL(CGPoint viewPoint, CGRect bounds, GLKVect
     
     UITouch *p = touches.anyObject;
     CGPoint l = [p locationInView:self];
+    CGPoint v = [self velocityFromPoint:previousPoint atTime:previousTouchTime toPoint:l atTime:CFAbsoluteTimeGetCurrent()];
     
-    float distance = 0.0;
+    currentVelocity = ViewPointToGL(v, self.bounds, (GLKVector3){0,0,0});
+    float distance = 0.;
     if (previousPoint.x > 0) {
         distance = sqrtf((l.x - previousPoint.x) * (l.x - previousPoint.x) + (l.y - previousPoint.y) * (l.y - previousPoint.y));
     }
     
-    penThickness = 0.02f;
+    float velocityMagnitude = sqrtf(v.x*v.x + v.y*v.y);
+    float clampedVelocityMagnitude = clamp(VELOCITY_CLAMP_MIN, VELOCITY_CLAMP_MAX, velocityMagnitude);
+    float normalizedVelocity = (clampedVelocityMagnitude - VELOCITY_CLAMP_MIN) / (VELOCITY_CLAMP_MAX - VELOCITY_CLAMP_MIN);
+    
+    float lowPassFilterAlpha = STROKE_WIDTH_SMOOTHING;
+    float newThickness = (STROKE_WIDTH_MAX - STROKE_WIDTH_MIN) * (1 - normalizedVelocity) + STROKE_WIDTH_MIN;
+    penThickness = penThickness * lowPassFilterAlpha + newThickness * (1 - lowPassFilterAlpha);
     
     CGPoint mid = CGPointMake((l.x + previousPoint.x) / 2.0, (l.y + previousPoint.y) / 2.0);
     
@@ -300,9 +313,10 @@ static PPSSignaturePoint ViewPointToGL(CGPoint viewPoint, CGRect bounds, GLKVect
     previousPoint = l;
     previousMidPoint = mid;
     
-    [self setNeedsDisplay];
-    
     numberOfTouchEvents++;
+    previousTouchTime = CFAbsoluteTimeGetCurrent();
+    
+    [self setNeedsDisplay];
 }
 
 
@@ -310,9 +324,24 @@ static PPSSignaturePoint ViewPointToGL(CGPoint viewPoint, CGRect bounds, GLKVect
 {
     UITouch *p = touches.anyObject;
     CGPoint l = [p locationInView:self];
+    CGPoint v = [self velocityFromPoint:previousPoint atTime:previousTouchTime toPoint:l atTime:CFAbsoluteTimeGetCurrent()];
     
-    CGFloat distance = sqrtf((l.x - firstPoint.x) * (l.x - firstPoint.x) + (l.y - firstPoint.y) * (l.y - firstPoint.y));
-    if (numberOfTouchEvents <= TAP_MAX_NUM_TOUCH_EVENTS && distance <= TAP_MAX_DISTANCE) {
+    currentVelocity = ViewPointToGL(v, self.bounds, (GLKVector3){0,0,0});
+    float distance = 0.;
+    if (previousPoint.x > 0) {
+        distance = sqrtf((l.x - previousPoint.x) * (l.x - previousPoint.x) + (l.y - previousPoint.y) * (l.y - previousPoint.y));
+    }
+    
+    float velocityMagnitude = sqrtf(v.x*v.x + v.y*v.y);
+    float clampedVelocityMagnitude = clamp(VELOCITY_CLAMP_MIN, VELOCITY_CLAMP_MAX, velocityMagnitude);
+    float normalizedVelocity = (clampedVelocityMagnitude - VELOCITY_CLAMP_MIN) / (VELOCITY_CLAMP_MAX - VELOCITY_CLAMP_MIN);
+    
+    float lowPassFilterAlpha = STROKE_WIDTH_SMOOTHING;
+    float newThickness = (STROKE_WIDTH_MAX - STROKE_WIDTH_MIN) * (1 - normalizedVelocity) + STROKE_WIDTH_MIN;
+    penThickness = penThickness * lowPassFilterAlpha + newThickness * (1 - lowPassFilterAlpha);
+    
+    CGFloat tapDistance = sqrtf((l.x - firstPoint.x) * (l.x - firstPoint.x) + (l.y - firstPoint.y) * (l.y - firstPoint.y));
+    if (numberOfTouchEvents <= TAP_MAX_NUM_TOUCH_EVENTS && tapDistance <= TAP_MAX_DISTANCE) {
         // Tap
         glBindBuffer(GL_ARRAY_BUFFER, dotsBuffer);
         
@@ -351,10 +380,10 @@ static PPSSignaturePoint ViewPointToGL(CGPoint viewPoint, CGRect bounds, GLKVect
     // Pan
     glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
     
-    PPSSignaturePoint v = ViewPointToGL(l, self.bounds, (GLKVector3){1, 1, 1});
-    addVertex(&length, v);
+    PPSSignaturePoint v_ = ViewPointToGL(l, self.bounds, (GLKVector3){1, 1, 1});
+    addVertex(&length, v_);
     
-    previousVertex = v;
+    previousVertex = v_;
     addVertex(&length, previousVertex);
     
     [self setNeedsDisplay];
@@ -498,6 +527,16 @@ static PPSSignaturePoint ViewPointToGL(CGPoint viewPoint, CGRect bounds, GLKVect
     glDeleteBuffers(1, &dotsBuffer);
     
     effect = nil;
+}
+
+
+- (CGPoint)velocityFromPoint:(CGPoint)startPoint atTime:(CFAbsoluteTime)startTime toPoint:(CGPoint)endPoint atTime:(CFAbsoluteTime)endTime {
+    CGFloat dx = fabs(endPoint.x - startPoint.x);
+    CGFloat dy = fabs(endPoint.y - startPoint.y);
+    
+    CGFloat t = endTime - startTime;
+    
+    return CGPointMake(dx / t, dy / t);
 }
 
 @end
