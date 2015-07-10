@@ -9,6 +9,6 @@ EXTERNAL SOURCES:
     :path: ../PPSSignatureView.podspec
 
 SPEC CHECKSUMS:
-  PPSSignatureView: 0f9ea27f72f45a9d6a7b9e7a9b7db1c1b91c547c
+  PPSSignatureView: 746f1fc186dea15c248bc99cc64182f93af131b9
 
-COCOAPODS: 0.33.1
+COCOAPODS: 0.37.2
